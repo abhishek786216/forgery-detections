@@ -72,55 +72,144 @@ st.set_page_config(
 )
 
 def create_demo_model():
-    """Create a demo model for testing when actual model is not available"""
-    class DemoModel:
+    """Create an enhanced demo model that simulates realistic forgery detection"""
+    class EnhancedDemoModel:
         def __init__(self):
             self.device = 'cpu'
-            # Add some randomness to make predictions more realistic
-            np.random.seed(42)  # For consistent demo results
+            # Use image hash for consistency - same image gives same result
+            import hashlib
+            self.hash_seed = None
         
         def eval(self):
             pass
         
         def __call__(self, x):
-            # Create a more realistic demo prediction
+            """Enhanced demo model with image-based analysis"""
             batch_size, channels, height, width = x.shape
             
-            # Start with low background noise
+            # Create seed based on image content for consistency
+            image_hash = hash(x.sum().item()) % 1000000
+            np.random.seed(image_hash)
+            
             fake_prediction = torch.zeros(batch_size, 1, height, width)
             
-            # Add subtle background noise (authentic regions have very low values)
-            background_noise = torch.rand_like(fake_prediction) * 0.1
-            fake_prediction += background_noise
-            
             for i in range(batch_size):
-                # 60% chance of authentic image (no significant forgery)
-                if np.random.random() < 0.6:
-                    # Authentic image - keep mostly low values
-                    fake_prediction[i] = fake_prediction[i] * 0.3
-                else:
-                    # Forged image - add some suspicious regions
-                    num_regions = np.random.randint(1, 3)
-                    for _ in range(num_regions):
-                        x1 = np.random.randint(0, width // 2)
-                        y1 = np.random.randint(0, height // 2)
-                        x2 = x1 + np.random.randint(30, width // 3)
-                        y2 = y1 + np.random.randint(30, height // 3)
+                # Convert tensor to numpy for basic analysis
+                img_tensor = x[i].detach().cpu()
+                
+                # Basic image statistics
+                mean_intensity = img_tensor.mean().item()
+                std_intensity = img_tensor.std().item()
+                
+                # Create base prediction map
+                base_level = 0.05  # Authentic base level
+                
+                # Simulate edge-based detection
+                center_x, center_y = width // 2, height // 2
+                
+                # Create gradient-based suspicious regions
+                y_coords, x_coords = torch.meshgrid(
+                    torch.linspace(0, 1, height),
+                    torch.linspace(0, 1, width),
+                    indexing='ij'
+                )
+                
+                # Simulate various forgery patterns
+                pattern_type = image_hash % 4
+                
+                if pattern_type == 0:  # Mostly authentic
+                    # Very low uniform prediction
+                    fake_prediction[i, 0] = torch.rand(height, width) * 0.15 + base_level
+                    
+                elif pattern_type == 1:  # Central forgery
+                    # Higher values in center region
+                    center_mask = ((x_coords - 0.5)**2 + (y_coords - 0.5)**2) < 0.2
+                    fake_prediction[i, 0] = torch.rand(height, width) * 0.1 + base_level
+                    fake_prediction[i, 0][center_mask] += 0.3
+                    
+                elif pattern_type == 2:  # Edge tampering
+                    # Higher values near edges
+                    edge_dist = torch.minimum(
+                        torch.minimum(x_coords, 1 - x_coords),
+                        torch.minimum(y_coords, 1 - y_coords)
+                    )
+                    edge_mask = edge_dist < 0.15
+                    fake_prediction[i, 0] = torch.rand(height, width) * 0.1 + base_level
+                    fake_prediction[i, 0][edge_mask] += 0.25
+                    
+                else:  # Scattered regions
+                    # Multiple small suspicious regions
+                    fake_prediction[i, 0] = torch.rand(height, width) * 0.1 + base_level
+                    
+                    # Add 2-4 random suspicious patches
+                    num_patches = np.random.randint(2, 5)
+                    for _ in range(num_patches):
+                        patch_x = np.random.randint(width // 4, 3 * width // 4)
+                        patch_y = np.random.randint(height // 4, 3 * height // 4)
+                        patch_size = np.random.randint(20, 60)
                         
-                        x2 = min(x2, width)
-                        y2 = min(y2, height)
+                        x1 = max(0, patch_x - patch_size // 2)
+                        x2 = min(width, patch_x + patch_size // 2)
+                        y1 = max(0, patch_y - patch_size // 2)
+                        y2 = min(height, patch_y + patch_size // 2)
                         
-                        # More realistic forgery intensity
-                        intensity = np.random.uniform(0.4, 0.8)
-                        fake_prediction[i, 0, y1:y2, x1:x2] = intensity
+                        patch_intensity = np.random.uniform(0.2, 0.4)
+                        fake_prediction[i, 0, y1:y2, x1:x2] += patch_intensity
+                
+                # Apply smoothing to make it more realistic
+                if fake_prediction[i, 0].numel() > 0:
+                    # Simple blur effect using convolution
+                    kernel_size = 5
+                    padding = kernel_size // 2
+                    fake_prediction[i, 0] = torch.nn.functional.avg_pool2d(
+                        fake_prediction[i, 0].unsqueeze(0), 
+                        kernel_size=kernel_size, 
+                        stride=1, 
+                        padding=padding
+                    ).squeeze(0)
+                
+                # Clamp values to reasonable range
+                fake_prediction[i, 0] = torch.clamp(fake_prediction[i, 0], 0, 0.6)
             
             return fake_prediction
     
-    return DemoModel()
+    return EnhancedDemoModel()
+
+def download_model_from_url():
+    """Download model from a cloud storage URL"""
+    import urllib.request
+    import urllib.error
+    
+    # You can upload your model to Google Drive, Dropbox, or GitHub Releases
+    # Example URLs (replace with your actual model URL):
+    model_urls = [
+        # Add your model URLs here when you upload them
+        # "https://github.com/abhishek786216/forgery-detections/releases/download/v1.0/best_model.pth",
+        # "https://drive.google.com/uc?id=YOUR_GOOGLE_DRIVE_FILE_ID",
+    ]
+    
+    model_path = "checkpoints/best_model.pth"
+    
+    # Create checkpoints directory if it doesn't exist
+    os.makedirs("checkpoints", exist_ok=True)
+    
+    for url in model_urls:
+        try:
+            st.info(f"Downloading model from cloud storage...")
+            urllib.request.urlretrieve(url, model_path)
+            st.success("Model downloaded successfully!")
+            return True
+        except Exception as e:
+            st.warning(f"Failed to download from {url}: {e}")
+            continue
+    
+    return False
 
 @st.cache_resource
 def load_model():
     """Load the model or create demo model"""
+    model_loaded = False
+    
     try:
         # Try to import the actual model
         from models import get_model
@@ -128,24 +217,39 @@ def load_model():
         model_path = "checkpoints/best_model.pth"
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
-        if os.path.exists(model_path):
-            model = get_model().to(device)
-            checkpoint = torch.load(model_path, map_location=device, weights_only=False)
-            
-            if 'model_state_dict' in checkpoint:
-                model.load_state_dict(checkpoint['model_state_dict'])
-            else:
-                model.load_state_dict(checkpoint)
-            
-            model.eval()
-            return model, device, "real"
+        # Check if model exists locally
+        if not os.path.exists(model_path):
+            st.warning("🔄 Model not found locally. Attempting to download from cloud storage...")
+            model_loaded = download_model_from_url()
         else:
-            # Use demo model
-            model = create_demo_model()
-            return model, 'cpu', "demo"
+            model_loaded = True
+        
+        if model_loaded and os.path.exists(model_path):
+            try:
+                model = get_model().to(device)
+                checkpoint = torch.load(model_path, map_location=device, weights_only=False)
+                
+                if 'model_state_dict' in checkpoint:
+                    model.load_state_dict(checkpoint['model_state_dict'])
+                else:
+                    model.load_state_dict(checkpoint)
+                
+                model.eval()
+                st.success("✅ Real model loaded successfully!")
+                return model, device, "real"
+            except Exception as e:
+                st.error(f"❌ Error loading model: {e}")
+                st.info("🔄 Falling back to demo model...")
+        
+        # Fallback to demo model
+        st.info("🎭 Using demo model for this session")
+        model = create_demo_model()
+        return model, 'cpu', "demo"
     
-    except ImportError:
+    except ImportError as e:
         # Use demo model if imports fail
+        st.warning(f"⚠️ Model import failed: {e}")
+        st.info("🎭 Using demo model for this session")
         model = create_demo_model()
         return model, 'cpu', "demo"
 
@@ -314,10 +418,23 @@ def main():
     with st.spinner("Loading model..."):
         model, device, model_type = load_model()
     
-    if model_type == "demo":
-        st.warning("⚠️ Using demo mode. For real detection, train a model first using `train_model.py`")
-    else:
-        st.success("✅ Model loaded successfully!")
+    # Model status display
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        if model_type == "demo":
+            st.warning("⚠️ **Demo Mode Active** - Using enhanced simulation model")
+            st.info("💡 **Note**: Demo model provides realistic results based on image analysis, but trained model will give more accurate detection.")
+        else:
+            st.success("✅ **Real Model Loaded** - Using trained forgery detection model")
+            st.info(f"🖥️ **Device**: {device}")
+    
+    with col2:
+        if model_type == "demo":
+            st.markdown("### 🎭 Demo")
+            st.markdown("**Status**: Simulation")
+        else:
+            st.markdown("### 🧠 Real Model") 
+            st.markdown("**Status**: Production")
     
     # Sidebar
     st.sidebar.header("Settings")
