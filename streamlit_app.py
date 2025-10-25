@@ -6,7 +6,59 @@ Simple Streamlit App for Image Forgery Detection
 import streamlit as st
 import torch
 import numpy as np
-import cv2
+
+# Handle OpenCV import with fallback for cloud environments
+try:
+    import cv2
+    CV2_AVAILABLE = True
+except ImportError:
+    st.error("OpenCV not available. Some features may be limited.")
+    CV2_AVAILABLE = False
+    # Create a mock cv2 module for basic functionality
+    class MockCV2:
+        @staticmethod
+        def resize(img, size, interpolation=None):
+            from PIL import Image
+            if isinstance(img, np.ndarray):
+                # Convert numpy array to PIL Image
+                if img.dtype != np.uint8:
+                    img = (img * 255).astype(np.uint8)
+                pil_img = Image.fromarray(img)
+            else:
+                pil_img = img
+            return np.array(pil_img.resize(size, Image.LANCZOS))
+        
+        INTER_LINEAR = 1
+        COLOR_RGB2GRAY = 6
+        
+        @staticmethod
+        def cvtColor(img, code):
+            if code == 6:  # RGB2GRAY
+                return np.dot(img[...,:3], [0.2989, 0.5870, 0.1140])
+            return img
+            
+        @staticmethod
+        def Canny(img, low, high):
+            return np.zeros_like(img)
+            
+        @staticmethod
+        def GaussianBlur(img, ksize, sigma):
+            return img
+            
+        @staticmethod
+        def blur(img, ksize):
+            return img
+            
+        @staticmethod
+        def absdiff(img1, img2):
+            return np.abs(img1.astype(float) - img2.astype(float))
+            
+        @staticmethod
+        def Laplacian(img, dtype):
+            return np.zeros_like(img)
+    
+    cv2 = MockCV2()
+
 from PIL import Image
 import matplotlib.pyplot as plt
 import io
@@ -63,8 +115,6 @@ def create_demo_model():
                         fake_prediction[i, 0, y1:y2, x1:x2] = intensity
             
             return fake_prediction
-    
-    return DemoModel()
     
     return DemoModel()
 
@@ -167,7 +217,18 @@ def predict_forgery(model, image, threshold=0.5, model_type="real"):
     prediction_np = prediction.squeeze().numpy()
     
     # Resize back to original
-    prediction_resized = cv2.resize(prediction_np, original_size, interpolation=cv2.INTER_LINEAR)
+    if CV2_AVAILABLE:
+        prediction_resized = cv2.resize(prediction_np, original_size, interpolation=cv2.INTER_LINEAR)
+    else:
+        # Fallback using PIL
+        from PIL import Image
+        if prediction_np.dtype != np.uint8:
+            pred_scaled = (prediction_np * 255).astype(np.uint8)
+        else:
+            pred_scaled = prediction_np
+        pred_pil = Image.fromarray(pred_scaled)
+        pred_resized_pil = pred_pil.resize(original_size, Image.LANCZOS)
+        prediction_resized = np.array(pred_resized_pil).astype(np.float32) / 255.0
     
     # Apply adaptive thresholding for better results
     if model_type == "demo":
